@@ -48,6 +48,8 @@ Specifies the name of the Azure AD group that the new device should be added to.
 Wait for the Autopilot profile assignment. (This can take a while for dynamic groups.)
 .PARAMETER Reboot
 Reboot the device after the Autopilot profile has been assigned (necessary to download the profile and apply the computer name, if specified).
+.PARAMETER Delay
+Set a delay in seconds at the end of the script for the user to read the output
 .EXAMPLE
 .\Get-WindowsAutoPilotInfo.ps1 -ComputerName MYCOMPUTER -OutputFile .\MyComputer.csv
 .EXAMPLE
@@ -83,6 +85,7 @@ param(
     [Parameter(Mandatory = $False)] [System.Management.Automation.PSCredential] $Credential = $null,
     [Parameter(Mandatory = $False)] [Switch] $Partner = $false,
     [Parameter(Mandatory = $False)] [Switch] $Force = $false,
+	[Parameter(Mandatory=$False)] [int] $Delay = 1,
     [Parameter(Mandatory = $True, ParameterSetName = 'Online')] [Switch] $Online = $false,
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [String] $TenantId = "",
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [String] $AppId = "",
@@ -2088,6 +2091,12 @@ End {
             }
             $assignDuration = (Get-Date) - $assignStart
             $assignSeconds = [Math]::Ceiling($assignDuration.TotalSeconds)
+            
+            for ($i = 1 ; $i -le $Delay ; $i++) {
+                Write-Progress -Activity "Finished" -PercentComplete (($i / $Delay) * 100) -Status "Closing in $($Delay - $i) seconds"
+                Start-Sleep -Seconds 1
+            }
+
             Write-Host "Profiles assigned to all devices. Elapsed time to complete assignment: $assignSeconds seconds"    
             if ($Reboot) {
                 Restart-Computer -Force
