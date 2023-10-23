@@ -46,6 +46,8 @@ An optional value specifying the computer name to be assigned to the device. Thi
 Specifies the name of the Azure AD group that the new device should be added to.
 .PARAMETER Assign
 Wait for the Autopilot profile assignment. (This can take a while for dynamic groups.)
+.PARAMETER WaitForProfile
+Wait for the correct Autopilot profile to be assigned. Requires -Assign (This can take a while for dynamic groups.)
 .PARAMETER Reboot
 Reboot the device after the Autopilot profile has been assigned (necessary to download the profile and apply the computer name, if specified).
 .PARAMETER Delay
@@ -92,7 +94,10 @@ param(
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [String] $AppSecret = "",
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [String] $AddToGroup = "",
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [String] $AssignedComputerName = "",
-    [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [Switch] $Assign = $false, 
+	[Parameter(Mandatory=$False,ParameterSetName = 'Online')]
+    [Parameter(Mandatory=$True,ParameterSetName = 'Assign')][Switch] $Assign = $false,
+    [Parameter(Mandatory=$False,ParameterSetName = 'Online')]
+    [Parameter(Mandatory=$False,ParameterSetName = 'Assign')][string] $WaitForProfile, 
     [Parameter(Mandatory = $False, ParameterSetName = 'Online')] [Switch] $Reboot = $false
 )
 
@@ -2072,35 +2077,71 @@ End {
         }
 
         # Wait for assignment (if specified)
-        if ($Assign) {
-            $assignStart = Get-Date
-            $processingCount = 1
-            while ($processingCount -gt 0) {
+		if ($Assign)
+		{
+			$assignStart = Get-Date
+			$processingCount = 1
+            $progress = 0
+
+            if ($WaitForProfile) {
+                Write-Host "Checking for AutoPilot profile $WaitForProfile"
+                $apProfile = Get-AutopilotProfile | Where { $_.displayName -eq $WaitForProfile }
+                $activity = "Waiting for devices to be assigned to '$WaitForProfile'"
+            }
+            else {
+                $activity = "Waiting for devices to be assigned"
+            }
+
+            while ($processingCount -gt 0)
+			{
                 $processingCount = 0
+                if ($WaitForProfile) {
+                    #Get a list of device ids assigned to the AutoPilot profile to compare against
+                    $profileDeviceIds = $apProfile | Get-AutopilotProfileAssignedDevice | Select -ExpandProperty id
+                }
+
                 $autopilotDevices | ForEach-Object {
-                    $device = Get-AutopilotDevice -id $_.id -Expand
-                    if (-not ($device.deploymentProfileAssignmentStatus.StartsWith("assigned"))) {
+					$device = Get-AutopilotDevice -id $_.id -Expand
+                    Write-Verbose "Checking device: $($_.id)"
+
+                    #Check if device is in the right profile
+                    if ($profileDeviceIds -and $device.id -notin $profileDeviceIds) {
+                        Write-Verbose "DeviceID $($_.id) not assigned to profile '$WaitForProfile'"
                         $processingCount = $processingCount + 1
                     }
-                }
-                $deviceCount = $autopilotDevices.Length
-                Write-Host "Waiting for $processingCount of $deviceCount to be assigned"
-                if ($processingCount -gt 0) {
-                    Start-Sleep 30
-                }    
-            }
+                    #Check if profile status is assigned
+                    elseif ((-not ($device.deploymentProfileAssignmentStatus.StartsWith("assigned")))) {
+                        Write-Verbose "DeviceID $($_.id) not assigned"
+						$processingCount = $processingCount + 1
+					}
+                    
+                    else {
+                        Write-Verbose "DeviceID $($_.id) found assigned to profile $WaitForProfile"
+                    }
+				}
+
+                $progress = $progress+1
+				Write-Progress -Activity $activity -CurrentOperation "Processing $processingCount of $($imported.count)" -PercentComplete $progress
+				
+				if ($processingCount -gt 0){
+					Start-Sleep 30
+				}	
+			}
+			Write-Progress -Activity $activity -Completed
+
             $assignDuration = (Get-Date) - $assignStart
             $assignSeconds = [Math]::Ceiling($assignDuration.TotalSeconds)
+			Write-Host "Profiles assigned to all devices.  Elapsed time to complete assignment: $assignSeconds seconds"	
             
             for ($i = 1 ; $i -le $Delay ; $i++) {
                 Write-Progress -Activity "Finished" -PercentComplete (($i / $Delay) * 100) -Status "Closing in $($Delay - $i) seconds"
                 Start-Sleep -Seconds 1
             }
 
-            Write-Host "Profiles assigned to all devices. Elapsed time to complete assignment: $assignSeconds seconds"    
-            if ($Reboot) {
-                Restart-Computer -Force
-            }
-        }
+			if ($Reboot)
+			{
+				Restart-Computer -Force
+			}
+		}
     }
 }
